@@ -1,0 +1,214 @@
+```html
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Calendrier de Chasse</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-stone-100 min-h-screen p-4 md:p-8 font-sans">
+    <div class="max-w-2xl mx-auto">
+        <header class="mb-8 border-b-2 border-emerald-600 pb-4">
+            <h1 class="text-3xl md:text-4xl font-extrabold text-emerald-800">Calendrier de Chasse</h1>
+            <p class="text-stone-500 mt-2 text-sm" id="sync-status">Connexion au serveur de sauvegarde...</p>
+        </header>
+
+        <div id="app-root" class="space-y-8">
+            <!-- L'application sera générée ici -->
+        </div>
+    </div>
+
+    <script type="module">
+        import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js';
+        import { getFirestore, doc, setDoc, onSnapshot } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js';
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js';
+
+        // Configuration pour la base de données intégrée
+        let firebaseConfig;
+        try {
+            firebaseConfig = JSON.parse(__firebase_config);
+        } catch(e) {
+            document.getElementById('sync-status').innerText = "Erreur de configuration réseau.";
+            document.getElementById('sync-status').className = "text-red-500 mt-2 text-sm";
+        }
+        
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'chasse-app-id';
+
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+
+        let currentUser = null;
+        let appData = null;
+
+        // Les données initiales demandées
+        const defaultData = {
+            chasses: [
+                {txt: "Velexon - 24 octobre", done: false}, {txt: "Rup sur Saône - 7 novembre", done: false}, 
+                {txt: "Traves - 8 novembre", done: false}, {txt: "Pains - 2 janvier", done: false}, 
+                {txt: "Bournois - 16 janvier", done: false}, {txt: "Fraine Saint-Mamès - 17 janvier", done: false}, 
+                {txt: "Chargé les ports - 23 janvier", done: false}, {txt: "Velorcey - 30 janvier", done: false}, 
+                {txt: "Velexon - 6 février", done: false}, {txt: "Port-sur-Saône - 7 février", done: false}, 
+                {txt: "Moimay - 28 février", done: false}, {txt: "Romain - 27 février ou 20 mars", done: false}, 
+                {txt: "Bougnon - 6 mars", done: false}, {txt: "Haro - 13 mars", done: false}, 
+                {txt: "Authoison - 14 mars", done: false}
+            ],
+            dates: [
+                {txt: "31 octobre", done: false}, {txt: "1er novembre", done: false}, {txt: "14 novembre", done: false}, 
+                {txt: "15 novembre", done: false}, {txt: "21 novembre", done: false}, {txt: "22 novembre", done: false}, 
+                {txt: "28 novembre", done: false}, {txt: "5 décembre", done: false}, {txt: "6 décembre", done: false}, 
+                {txt: "13 décembre", done: false}, {txt: "19 décembre", done: false}, {txt: "20 décembre", done: false}, 
+                {txt: "3 janvier", done: false}, {txt: "20 février", done: false}, {txt: "20 mars", done: false}, 
+                {txt: "27 mars", done: false}, {txt: "28 mars", done: false}
+            ],
+            territoires: ["Pompières", "Chaux-lès-Port"]
+        };
+
+        // --- Fonctions d'interaction globales ---
+        window.toggleItem = async (type, index) => {
+            if (!appData) return;
+            appData[type][index].done = !appData[type][index].done;
+            await pushDataToCloud();
+        };
+
+        window.updateTxt = async (type, index, value) => {
+            if (!appData) return;
+            if (type === 'territoires') {
+                appData[type][index] = value;
+            } else {
+                appData[type][index].txt = value;
+            }
+            await pushDataToCloud();
+        };
+
+        window.addItem = async (type) => {
+            if (!appData) return;
+            if (type === 'territoires') appData.territoires.push("Nouveau territoire");
+            else appData[type].push({txt: "Nouvelle date / chasse", done: false});
+            await pushDataToCloud();
+        };
+
+        window.deleteItem = async (type, index) => {
+            if (!appData) return;
+            appData[type].splice(index, 1);
+            await pushDataToCloud();
+        };
+
+        // --- Sauvegarde dans le Cloud Firestore ---
+        const pushDataToCloud = async () => {
+            if (!currentUser || !appData) return;
+            document.getElementById('sync-status').innerText = "Sauvegarde en cours...";
+            
+            const docRef = doc(db, 'artifacts', appId, 'users', currentUser.uid, 'calendrier', 'mon_calendrier');
+            try {
+                await setDoc(docRef, appData);
+                document.getElementById('sync-status').innerText = "✅ Sauvegardé en ligne avec succès.";
+                document.getElementById('sync-status').className = "text-emerald-600 mt-2 text-sm font-semibold";
+            } catch (error) {
+                console.error("Erreur de sauvegarde", error);
+                document.getElementById('sync-status').innerText = "❌ Erreur de sauvegarde.";
+                document.getElementById('sync-status').className = "text-red-500 mt-2 text-sm";
+            }
+        };
+
+        // --- Affichage ---
+        const render = () => {
+            if (!appData) return;
+
+            const root = document.getElementById('app-root');
+            root.innerHTML = `
+                <!-- Section 1 : Chasses à valider -->
+                <div class="bg-white p-5 md:p-6 rounded-2xl shadow border border-stone-200">
+                    <h2 class="text-xl font-bold text-emerald-800 mb-5 flex items-center gap-2">
+                        <span>🎯</span> Invitations à valider
+                    </h2>
+                    <div class="space-y-3">
+                        ${appData.chasses.map((c, i) => `
+                            <div class="flex items-center gap-3 group">
+                                <input type="checkbox" ${c.done ? 'checked' : ''} onchange="window.toggleItem('chasses', ${i})" class="w-6 h-6 rounded text-emerald-600 accent-emerald-600 cursor-pointer flex-shrink-0">
+                                <input type="text" value="${c.txt}" onchange="window.updateTxt('chasses', ${i}, this.value)" class="flex-grow bg-transparent border-b border-transparent focus:border-emerald-300 outline-none transition-colors py-1 ${c.done ? 'line-through text-stone-400' : 'text-stone-800 font-medium'}">
+                                <button onclick="window.deleteItem('chasses', ${i})" class="text-stone-300 hover:text-red-500 px-2 py-1 text-xl opacity-50 group-hover:opacity-100 transition-opacity">&times;</button>
+                            </div>
+                        `).join('')}
+                    </div>
+                    <button onclick="window.addItem('chasses')" class="mt-6 w-full bg-emerald-50 text-emerald-700 py-2 rounded-lg font-semibold hover:bg-emerald-100 transition-colors">+ Ajouter une chasse</button>
+                </div>
+
+                <!-- Section 2 : Dates disponibles -->
+                <div class="bg-white p-5 md:p-6 rounded-2xl shadow border border-stone-200">
+                    <h2 class="text-xl font-bold text-emerald-800 mb-5 flex items-center gap-2">
+                        <span>📅</span> Dates encore disponibles
+                    </h2>
+                    <div class="space-y-3">
+                        ${appData.dates.map((d, i) => `
+                            <div class="flex items-center gap-3 group">
+                                <input type="checkbox" ${d.done ? 'checked' : ''} onchange="window.toggleItem('dates', ${i})" class="w-6 h-6 rounded text-emerald-600 accent-emerald-600 cursor-pointer flex-shrink-0">
+                                <input type="text" value="${d.txt}" onchange="window.updateTxt('dates', ${i}, this.value)" class="flex-grow bg-transparent border-b border-transparent focus:border-emerald-300 outline-none transition-colors py-1 ${d.done ? 'line-through text-stone-400' : 'text-stone-800'}">
+                                <button onclick="window.deleteItem('dates', ${i})" class="text-stone-300 hover:text-red-500 px-2 py-1 text-xl opacity-50 group-hover:opacity-100 transition-opacity">&times;</button>
+                            </div>
+                        `).join('')}
+                    </div>
+                    <button onclick="window.addItem('dates')" class="mt-6 w-full bg-emerald-50 text-emerald-700 py-2 rounded-lg font-semibold hover:bg-emerald-100 transition-colors">+ Ajouter une date</button>
+                </div>
+
+                <!-- Section 3 : Territoires -->
+                <div class="bg-white p-5 md:p-6 rounded-2xl shadow border border-stone-200">
+                    <h2 class="text-xl font-bold text-emerald-800 mb-5 flex items-center gap-2">
+                        <span>📍</span> Territoires à contacter
+                    </h2>
+                    <div class="space-y-3">
+                        ${appData.territoires.map((t, i) => `
+                            <div class="flex items-center gap-3 group">
+                                <input type="text" value="${t}" onchange="window.updateTxt('territoires', ${i}, this.value)" class="flex-grow bg-stone-50 border border-stone-200 rounded p-2 focus:border-emerald-500 focus:bg-white outline-none font-medium text-stone-800">
+                                <button onclick="window.deleteItem('territoires', ${i})" class="text-stone-300 hover:text-red-500 px-2 py-1 text-xl opacity-50 group-hover:opacity-100 transition-opacity">&times;</button>
+                            </div>
+                        `).join('')}
+                    </div>
+                    <button onclick="window.addItem('territoires')" class="mt-6 w-full bg-emerald-50 text-emerald-700 py-2 rounded-lg font-semibold hover:bg-emerald-100 transition-colors">+ Ajouter un territoire</button>
+                </div>
+            `;
+        };
+
+        // --- Initialisation de l'authentification et de la base de données ---
+        const init = async () => {
+            try {
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                    await signInWithCustomToken(auth, __initial_auth_token);
+                } else {
+                    await signInAnonymously(auth);
+                }
+            } catch (error) {
+                console.error("Erreur Auth", error);
+            }
+
+            onAuthStateChanged(auth, (user) => {
+                currentUser = user;
+                if (user) {
+                    const docRef = doc(db, 'artifacts', appId, 'users', user.uid, 'calendrier', 'mon_calendrier');
+                    
+                    // onSnapshot écoute en permanence la base de données
+                    onSnapshot(docRef, (snapshot) => {
+                        if (snapshot.exists()) {
+                            appData = snapshot.data();
+                            document.getElementById('sync-status').innerText = "✅ Synchronisé.";
+                            document.getElementById('sync-status').className = "text-emerald-600 mt-2 text-sm font-semibold";
+                        } else {
+                            // C'est la première ouverture, on sauvegarde la liste par défaut
+                            appData = defaultData;
+                            pushDataToCloud();
+                        }
+                        render();
+                    }, (error) => {
+                        console.error("Erreur de synchronisation:", error);
+                    });
+                }
+            });
+        };
+
+        init();
+    </script>
+</body>
+</html>
+
+```
